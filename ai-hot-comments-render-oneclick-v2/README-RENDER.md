@@ -1,31 +1,74 @@
-# 一键部署到 Render（免服务器 / 免命令行）
+# AI Hot Final Base (可部署稳定版)
 
-这是 **AI 短视频评论应用** 的“一键部署蓝图”。只需把仓库连到 Render，即可自动构建与上线；之后每次 push 代码都会自动更新。
+这是一个**极简、可真实部署**的 Telegram 线索抓取 + 自动分析 + 审核发布基础工程。
 
-## 部署步骤（2~3 分钟）
-1. 把本项目上传到你的 GitHub 仓库（网页 → Add file → Upload files，上传整个解压后的文件夹内容）。
-2. 打开 https://render.com → 登录 → 右上角 **New + → Blueprint**。
-3. 在 *Public Git Repository* 输入框粘贴你的 GitHub 仓库地址（包含本文件 `render.yaml`）。
-4. **Connect** → 在生成的服务中添加环境变量：
-   - `OPENAI_API_KEY`：你的 OpenAI Key
-   - 其他变量已默认：`OPENAI_MODEL=gpt-4o-mini`、`PORT=8080`
-5. 点击 **Apply**，等待 1~2 分钟，Render 会给出公开访问地址。
+## 关键能力
 
-## 验证
-- 打开提供的 URL，看到页面即可；
-- 健康检查：访问 `https://你的域名/healthz` 返回 `{ ok: true }` 即正常；
-- 生成接口：`POST /api/generate-hot-comment`（Body 见源码）。
+- Telegram 抓取：**仅 API 客户端方式（GramJS）**，不使用 `https://t.me/s/...` HTML scraping。
+- mock/live 双模式：
+  - 配置完整时进入 live；
+  - 关键配置缺失自动降级 mock，并打印告警。
+- 自动化流水线：抓取 → 分析 → 草稿生成 → 审核池入池 → 高风险/高商机提醒 → 日报。
+- 审核池状态机：`pending -> approved/rejected -> published`（禁止非法跳转）。
+- 发布风控：
+  - 未 `approved` 不可发布；
+  - `ALLOW_MANUAL_PUBLISH=true` 前默认禁止外发；
+  - 发布失败会记录错误原因。
+- Bot 命令：`/start /today /risk /digest /run /lead /pending /approve /reject /publish`
 
-## 后续运维
-- 每次 push 到 GitHub：Render 自动构建并上线；
-- 日志/回滚/扩容：在 Render 控制台一键操作；
-- 商用建议：绑定自有域名（自动 HTTPS）；访问量上来后把 `plan: free` 升级到 `starter/standard`。
+## API / 命令
 
-## 本地调试（可选）
+- `GET /health`、`GET /healthz`
+- `GET /today`
+- `GET /risk`
+- `GET /digest`
+- `POST /pipeline/run`
+- `GET /pending`
+- `POST /approve { id }`
+- `POST /reject { id }`
+- `POST /publish { id }`
+- `POST /bot/webhook`（Telegram Webhook 回调）
+
+## 环境变量
+
+### live 必需（用于真实 Telegram 抓取）
+- `TG_API_ID`
+- `TG_API_HASH`
+- `TG_SESSION_STRING`
+- `TG_SOURCE_CHANNELS`（逗号分隔，如 `channelA,@channelB`）
+
+### 可选（建议）
+- `APP_MODE=mock|live`（不填时自动判断）
+- `PORT`（默认 `8080`）
+- `OPENAI_API_KEY`（不填则规则化兜底）
+- `OPENAI_MODEL`（默认 `gpt-4o-mini`）
+- `TG_BOT_TOKEN`（启用 Bot 命令/提醒）
+- `ADMIN_CHAT_ID`（管理员提醒和默认发布目标）
+- `AUTO_RUN=true|false`（默认 true）
+- `POLL_MS`（默认 300000）
+- `DIGEST_HOUR`（UTC 小时，默认 9）
+- `ALLOW_MANUAL_PUBLISH=true|false`（默认 false）
+- `RISK_KEYWORDS`
+- `LEAD_KEYWORDS`
+- `COMMAND_CHAT_ALLOWLIST`
+- `DATA_DIR`（默认 `data`）
+
+## 启动
+
 ```bash
-cp .env.example .env
-# 填入 OPENAI_API_KEY
-npm ci || npm install
-npm run dev
-# http://localhost:8080
+npm install
+npm start
 ```
+
+健康检查：`GET /health`
+
+## Telegram 抓取支持范围说明
+
+- 当前实现基于 Telegram 客户端 API（GramJS）抓取 `TG_SOURCE_CHANNELS` 历史消息。
+- 对于私有频道/受限频道，需要会话账号本身有访问权限。
+- 任一频道抓取失败会记录错误并跳过，不会导致服务崩溃。
+
+## 部署（Render / Replit）
+
+- Node 20+ 即可。
+- 无 live 配置时依然可在 mock 模式启动，便于先验收流程。
