@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: ai-hot-comments
+    env: docker
+    plan: free
+    region: frankfurt
+    rootDir: ai-hot-comments-render-oneclick-v2
+    dockerfilePath: Dockerfile
+    autoDeploy: true
+    healthCheckPath: /healthz
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-4o-mini
+      - key: PORT
+        value: 8080
