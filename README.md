@@ -15,3 +15,10 @@
 - 后端：接咨询、自动分层、推荐对应产品，并把线索沉淀到管理接口。
 
 详细说明见：`ai-hot-comments-render-oneclick-v2/README-RENDER.md`。
+
+
+## 工程补强
+
+- 业务蓝图已拆到独立配置模块；
+- 线索分层逻辑已抽到独立库并补了最小单测；
+- 新增 GitHub Actions CI，至少会跑 `node --check src/server.js` 和 `npm test`。

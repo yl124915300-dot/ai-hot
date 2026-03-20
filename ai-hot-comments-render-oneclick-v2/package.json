@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "node --watch src/server.js",
     "start": "NODE_ENV=production node src/server.js",
-    "test": "node -e \"console.log('ok')\""
+    "test": "node --test"
   },
   "dependencies": {
     "cors": "^2.8.5",

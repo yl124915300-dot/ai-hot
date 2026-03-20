@@ -82,6 +82,12 @@ npm run dev
 ## 数据持久化提醒
 当前咨询与生成记录默认写本地 JSON 文件，适合 MVP 验证。若你要长期运营，建议下一步改成 Postgres / Supabase，或在支持的付费套餐上挂持久化磁盘。
 
+## 工程化补强
+- `src/config/businessBlueprint.js`：集中维护业务漏斗、产品矩阵、Agent、模板与话术；
+- `src/lib/leadScoring.js`：集中维护客户分层与推荐产品规则；
+- `test/leadScoring.test.js`：覆盖最小分层规则，避免后续改动把报价入口弄坏；
+- `.github/workflows/ci.yml`：在 GitHub 上至少跑语法检查和单测。
+
 ## 下一步建议
 如果你后面要继续往下砸，优先顺序建议是：
 1. 把真实信息源接入侦察 Agent；
