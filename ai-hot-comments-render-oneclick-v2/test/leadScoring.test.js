@@ -31,6 +31,26 @@ test('inferCustomerSegment returns boss/company for market-entry style leads', (
   assert.equal(segment, '老板/公司');
 });
 
+test('company and small budget alone should not force boss/company', () => {
+  const segment = inferCustomerSegment({
+    company: '某某贸易公司',
+    demand: '我想先自己试水，看看适不适合做副业',
+    budget: '1000'
+  });
+
+  assert.equal(segment, '个人用户');
+});
+
+test('company with continuous monitoring demand should stay small team', () => {
+  const segment = inferCustomerSegment({
+    company: '某跨境项目组',
+    demand: '我们需要持续监控本地建材线索并每月更新优先级',
+    budget: '3000/月'
+  });
+
+  assert.equal(segment, '小团队');
+});
+
 test('recommendOffer matches each segment', () => {
   assert.match(recommendOffer('个人用户'), /机会诊断会/);
   assert.match(recommendOffer('小团队'), /定制情报监控/);

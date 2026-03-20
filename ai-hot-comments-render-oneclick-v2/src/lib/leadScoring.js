@@ -3,51 +3,155 @@ function normalizeText(value, maxLength = 1000) {
   return String(value).trim().slice(0, maxLength);
 }
 
+function parseBudgetValue(value) {
+  const raw = normalizeText(value, 100);
+  const numeric = raw.replace(/[^\d.]/g, '');
+  return Number(numeric || 0);
+}
+
+function addKeywordScore(text, keywords, points) {
+  return keywords.reduce((score, keyword) => {
+    return score + (text.includes(keyword) ? points : 0);
+  }, 0);
+}
+
 const SEGMENT_RULES = {
   '老板/公司': {
-    keywords: ['老板', '公司', '投资', '预算', '进入', '落地', '渠道', '工厂', '本地对接', '市场进入'],
+    strongKeywords: [
+      '老板',
+      '投资人',
+      '市场进入',
+      '进入乌兹',
+      '进入市场',
+      '本地对接',
+      '本地资源',
+      '渠道撮合',
+      '落地陪跑',
+      '工厂落地'
+    ],
+    weakKeywords: ['公司', '渠道', '落地'],
     recommendedOffer: '市场进入诊断 / 本地资源对接 / 老板级落地陪跑'
   },
   '小团队': {
-    keywords: ['团队', '项目', '月', '监控', '作战台', '协同', '线索池', '持续监控', '定制情报'],
+    strongKeywords: [
+      '团队',
+      '项目组',
+      '持续监控',
+      '定制情报',
+      '线索池',
+      '协同',
+      '作战台',
+      '月更新',
+      '每月更新'
+    ],
+    weakKeywords: ['项目', '监控', '月'],
     recommendedOffer: '定制情报监控 / 小团队作战台 / 月陪跑'
   },
   '个人用户': {
-    keywords: ['试水', '兼职', '个人', '副业', '自己做', '轻量'],
+    strongKeywords: [
+      '试水',
+      '兼职',
+      '个人',
+      '副业',
+      '自己做',
+      '轻量',
+      '先试试',
+      '先看看'
+    ],
+    weakKeywords: ['想了解', '学习一下'],
     recommendedOffer: '周机会包 / 行业包 / 机会诊断会'
   }
 };
 
 export function inferCustomerSegment(payload = {}) {
-  const joined = [payload.company, payload.demand, payload.budget, payload.notes]
-    .map((item) => normalizeText(item, 500).toLowerCase())
-    .join(' ');
+  const company = normalizeText(payload.company, 200).toLowerCase();
+  const demand = normalizeText(payload.demand, 500).toLowerCase();
+  const budgetText = normalizeText(payload.budget, 100).toLowerCase();
+  const notes = normalizeText(payload.notes, 500).toLowerCase();
+  const joined = [company, demand, budgetText, notes].filter(Boolean).join(' ');
 
-  const hasBossSignal = SEGMENT_RULES['老板/公司'].keywords.some((keyword) => joined.includes(keyword));
-  const hasTeamSignal = SEGMENT_RULES['小团队'].keywords.some((keyword) => joined.includes(keyword));
-  const hasPersonalSignal = SEGMENT_RULES['个人用户'].keywords.some((keyword) => joined.includes(keyword));
+  const scores = {
+    '个人用户': 0,
+    '小团队': 0,
+    '老板/公司': 0
+  };
 
-  if (hasBossSignal && !hasTeamSignal) {
+  scores['老板/公司'] += addKeywordScore(
+    joined,
+    SEGMENT_RULES['老板/公司'].strongKeywords,
+    3
+  );
+  scores['老板/公司'] += addKeywordScore(
+    joined,
+    SEGMENT_RULES['老板/公司'].weakKeywords,
+    1
+  );
+
+  scores['小团队'] += addKeywordScore(
+    joined,
+    SEGMENT_RULES['小团队'].strongKeywords,
+    3
+  );
+  scores['小团队'] += addKeywordScore(
+    joined,
+    SEGMENT_RULES['小团队'].weakKeywords,
+    1
+  );
+
+  scores['个人用户'] += addKeywordScore(
+    joined,
+    SEGMENT_RULES['个人用户'].strongKeywords,
+    3
+  );
+  scores['个人用户'] += addKeywordScore(
+    joined,
+    SEGMENT_RULES['个人用户'].weakKeywords,
+    1
+  );
+
+  const budgetValue = parseBudgetValue(budgetText);
+
+  if (budgetValue >= 20000) {
+    scores['老板/公司'] += 2;
+  } else if (budgetValue >= 3000) {
+    scores['小团队'] += 1;
+  }
+
+  if (company) {
+    scores['小团队'] += 1;
+  }
+
+  if (
+    scores['老板/公司'] >= 4 &&
+    scores['老板/公司'] > scores['小团队']
+  ) {
     return '老板/公司';
   }
 
-  if (hasTeamSignal) {
+  if (scores['小团队'] >= 3) {
     return '小团队';
   }
 
-  if (hasBossSignal) {
+  if (scores['个人用户'] >= 3) {
+    return '个人用户';
+  }
+
+  if (scores['老板/公司'] >= 3) {
     return '老板/公司';
   }
 
-  if (hasPersonalSignal) {
-    return '个人用户';
+  if (scores['小团队'] >= 1) {
+    return '小团队';
   }
 
   return '个人用户';
 }
 
 export function recommendOffer(segment) {
-  return SEGMENT_RULES[segment]?.recommendedOffer || SEGMENT_RULES['个人用户'].recommendedOffer;
+  return (
+    SEGMENT_RULES[segment]?.recommendedOffer ||
+    SEGMENT_RULES['个人用户'].recommendedOffer
+  );
 }
 
 export function scoreLead(payload = {}) {
