@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { inferCustomerSegment, recommendOffer, scoreLead } from '../src/lib/leadScoring.js';
+import {
+  inferCustomerSegment,
+  recommendOffer,
+  scoreLead
+} from '../src/lib/leadScoring.js';
 
 test('inferCustomerSegment returns personal for light trial users', () => {
   const segment = inferCustomerSegment({
@@ -49,6 +53,46 @@ test('company with continuous monitoring demand should stay small team', () => {
   });
 
   assert.equal(segment, '小团队');
+});
+
+test('budget range should use lower bound instead of concatenating digits', () => {
+  const segment = inferCustomerSegment({
+    company: '建材项目组',
+    demand: '我们团队需要持续监控线索池',
+    budget: '3000-5000/月'
+  });
+
+  assert.equal(segment, '小团队');
+});
+
+test('budget with comma and dollar sign should parse correctly', () => {
+  const segment = inferCustomerSegment({
+    company: '某制造公司',
+    demand: '老板想评估进入乌兹市场，后面可能要本地对接',
+    budget: '$20,000/month'
+  });
+
+  assert.equal(segment, '老板/公司');
+});
+
+test('budget with k unit should parse correctly', () => {
+  const segment = inferCustomerSegment({
+    company: '项目团队',
+    demand: '我们团队需要持续监控和每月更新',
+    budget: '3k-5k/月'
+  });
+
+  assert.equal(segment, '小团队');
+});
+
+test('budget with chinese ten-thousand unit should parse correctly', () => {
+  const segment = inferCustomerSegment({
+    company: '某制造公司',
+    demand: '老板要做市场进入和本地资源对接',
+    budget: '2万'
+  });
+
+  assert.equal(segment, '老板/公司');
 });
 
 test('recommendOffer matches each segment', () => {

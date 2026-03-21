@@ -4,9 +4,48 @@ function normalizeText(value, maxLength = 1000) {
 }
 
 function parseBudgetValue(value) {
-  const raw = normalizeText(value, 100);
-  const numeric = raw.replace(/[^\d.]/g, '');
-  return Number(numeric || 0);
+  const raw = normalizeText(value, 100).toLowerCase();
+  if (!raw) return 0;
+
+  const normalized = raw
+    .replace(/usd|us\$|\$/g, '')
+    .replace(/rmb|cny|¥/g, '')
+    .replace(/,/g, '')
+    .replace(/\s+/g, ' ');
+
+  const matches = [
+    ...normalized.matchAll(/(\d+(?:\.\d+)?)\s*(k|千|w|万)?/gi)
+  ];
+
+  if (!matches.length) return 0;
+
+  const values = matches
+    .map((match) => {
+      let amount = Number(match[1] || 0);
+      const unit = (match[2] || '').toLowerCase();
+
+      if (unit === 'k' || unit === '千') {
+        amount *= 1000;
+      } else if (unit === 'w' || unit === '万') {
+        amount *= 10000;
+      }
+
+      return amount;
+    })
+    .filter((num) => Number.isFinite(num) && num > 0);
+
+  if (!values.length) return 0;
+
+  const looksLikeRange =
+    values.length >= 2 &&
+    /(\-|~|～|至|到|–|—|between|from)/i.test(normalized);
+
+  // 对分层判断，区间预算取下限更稳，避免把“3000-5000/月”误判成超高预算
+  if (looksLikeRange) {
+    return Math.min(...values);
+  }
+
+  return values[0];
 }
 
 function addKeywordScore(text, keywords, points) {
