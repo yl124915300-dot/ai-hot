@@ -1,0 +1,114 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  inferCustomerSegment,
+  recommendOffer,
+  scoreLead
+} from '../src/lib/leadScoring.js';
+
+test('inferCustomerSegment returns personal for light trial users', () => {
+  const segment = inferCustomerSegment({
+    demand: '我想自己先轻量试水，看看有没有副业机会',
+    budget: '500'
+  });
+
+  assert.equal(segment, '个人用户');
+});
+
+test('inferCustomerSegment returns small team when continuous monitoring signals appear', () => {
+  const segment = inferCustomerSegment({
+    company: '跨境项目组',
+    demand: '我们团队需要持续监控建材线索，每月更新优先级',
+    budget: '3000/月'
+  });
+
+  assert.equal(segment, '小团队');
+});
+
+test('inferCustomerSegment returns boss/company for market-entry style leads', () => {
+  const segment = inferCustomerSegment({
+    company: '某制造公司',
+    demand: '老板想评估进入乌兹市场，后面可能要本地对接',
+    budget: '20000'
+  });
+
+  assert.equal(segment, '老板/公司');
+});
+
+test('company and small budget alone should not force boss/company', () => {
+  const segment = inferCustomerSegment({
+    company: '某某贸易公司',
+    demand: '我想先自己试水，看看适不适合做副业',
+    budget: '1000'
+  });
+
+  assert.equal(segment, '个人用户');
+});
+
+test('company with continuous monitoring demand should stay small team', () => {
+  const segment = inferCustomerSegment({
+    company: '某跨境项目组',
+    demand: '我们需要持续监控本地建材线索并每月更新优先级',
+    budget: '3000/月'
+  });
+
+  assert.equal(segment, '小团队');
+});
+
+test('budget range should use lower bound instead of concatenating digits', () => {
+  const segment = inferCustomerSegment({
+    company: '建材项目组',
+    demand: '我们团队需要持续监控线索池',
+    budget: '3000-5000/月'
+  });
+
+  assert.equal(segment, '小团队');
+});
+
+test('budget with comma and dollar sign should parse correctly', () => {
+  const segment = inferCustomerSegment({
+    company: '某制造公司',
+    demand: '老板想评估进入乌兹市场，后面可能要本地对接',
+    budget: '$20,000/month'
+  });
+
+  assert.equal(segment, '老板/公司');
+});
+
+test('budget with k unit should parse correctly', () => {
+  const segment = inferCustomerSegment({
+    company: '项目团队',
+    demand: '我们团队需要持续监控和每月更新',
+    budget: '3k-5k/月'
+  });
+
+  assert.equal(segment, '小团队');
+});
+
+test('budget with chinese ten-thousand unit should parse correctly', () => {
+  const segment = inferCustomerSegment({
+    company: '某制造公司',
+    demand: '老板要做市场进入和本地资源对接',
+    budget: '2万'
+  });
+
+  assert.equal(segment, '老板/公司');
+});
+
+test('recommendOffer matches each segment', () => {
+  assert.match(recommendOffer('个人用户'), /机会诊断会/);
+  assert.match(recommendOffer('小团队'), /定制情报监控/);
+  assert.match(recommendOffer('老板/公司'), /市场进入诊断/);
+});
+
+test('scoreLead returns segment and recommended offer together', () => {
+  const scored = scoreLead({
+    demand: '我们团队想做定制情报监控和线索池',
+    company: '项目团队'
+  });
+
+  assert.deepEqual(scored, {
+    segment: '小团队',
+    recommendedOffer: '定制情报监控 / 小团队作战台 / 月陪跑'
+  });
+});

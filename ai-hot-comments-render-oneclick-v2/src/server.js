@@ -7,6 +7,8 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
+import { AGENT_DEFINITIONS, BUSINESS_BLUEPRINT, CHAT_SCRIPTS, CONTENT_TEMPLATES } from './config/businessBlueprint.js';
+import { scoreLead } from './lib/leadScoring.js';
 
 dotenv.config();
 
@@ -29,13 +31,13 @@ const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS || 60000);
 const RATE_LIMIT_MAX_REQUESTS = Number(process.env.RATE_LIMIT_MAX_REQUESTS || 20);
 const MAX_BATCH_SIZE = Math.max(1, Number(process.env.MAX_BATCH_SIZE || 5));
 const LOG_PROMPTS = String(process.env.LOG_PROMPTS || 'false').toLowerCase() === 'true';
-const APP_NAME = process.env.PUBLIC_APP_NAME || '中亚资讯内容生成器';
-const APP_TAGLINE = process.env.PUBLIC_APP_TAGLINE || '把乌兹/中亚市场资讯快速改写成标题、热评、脚本与商机分析。';
+const APP_NAME = process.env.PUBLIC_APP_NAME || '乌兹机会情报台';
+const APP_TAGLINE = process.env.PUBLIC_APP_TAGLINE || '把“内容引流 + 情报产品 + 高价服务成交”先跑成一个能落地的最小闭环。';
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
 const TELEGRAM_OWNER_CHAT_ID = process.env.TELEGRAM_OWNER_CHAT_ID || '';
 const TELEGRAM_WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET || '';
 const PUBLIC_TELEGRAM_URL = process.env.PUBLIC_TELEGRAM_URL || '';
-const SALES_CTA_TEXT = process.env.SALES_CTA_TEXT || '获取样例 / 预约咨询 / 加 Telegram 私聊';
+const SALES_CTA_TEXT = process.env.SALES_CTA_TEXT || '先看内容样例，再进私聊做诊断 / 定向监控 / 老板简报';
 
 const TRACKS = {
   general: {
@@ -218,7 +220,8 @@ function buildUserPrompt({ prompt, tone = '直接实用', length = 80, track = '
     `长度参考：${length}`,
     `输入内容：${prompt}`,
     `输出要求：${taskConfig.instruction}`,
-    `转化目标：内容最终要服务于引流到私域、咨询成交或企业合作。`,
+    '补充要求：如果信息本身具备机会属性，请优先输出“谁适合做、为什么现在值得关注、第一步动作、风险提醒”。',
+    '转化目标：内容最终要服务于引流到私域、咨询成交或企业合作。',
     '如果输出多条，请使用清晰编号；不要写多余说明。'
   ].join('\n');
 }
@@ -248,7 +251,7 @@ async function generateSingleContent({ prompt, tone = '直接实用', length = 8
       { role: 'user', content: userPrompt }
     ],
     temperature: 0.7,
-    max_tokens: 600
+    max_tokens: 700
   });
 
   return resp.choices?.[0]?.message?.content?.trim() || '';
@@ -258,11 +261,13 @@ function buildDistributionPack({ prompt, track = 'general' }) {
   const safeTrack = normalizeTrack(track);
   const trackLabel = TRACKS[safeTrack].label;
   return {
-    publicPost: `【${trackLabel}机会提醒】${prompt.slice(0, 80)}${prompt.length > 80 ? '…' : ''}\n想拿完整拆解、脚本样例或行业判断，私聊我/加 Telegram 领取。`,
-    privateFollowup: '你好，我看你对这个方向感兴趣。我可以给你发一版样例内容、行业判断和适合你当前业务的切入建议。',
+    publicPost: `【${trackLabel}机会提醒】${prompt.slice(0, 80)}${prompt.length > 80 ? '…' : ''}\n这条不只是新闻，更像一个可验证的窗口。想拿完整拆解、动作建议或老板简报版，私聊我。`,
+    paidPreview: ['【付费版会补充】', '1. 这条机会为什么值得推', '2. 谁适合做', '3. 建议第一步', '4. 核心风险点'].join('\n'),
+    bossBrief: ['【老板视角】', '结论：值得关注，但先轻验证。', '进入建议：小批量试单 + 本地渠道核验 + 付款条件前置确认。', '我方可协助：定向监控 / 二次验证 / 本地对接。'].join('\n'),
+    privateFollowup: '你好，我看你对这个方向感兴趣。我可以先给你一版样例拆解，再判断你更适合周机会包、定向监控，还是直接做机会诊断。',
     salesChecklist: [
-      '先确认客户做什么行业/是否已有中亚业务',
-      '判断客户更需要资讯、脚本还是线索服务',
+      '先确认客户是个人 / 小团队 / 老板',
+      '判断客户更需要低价包、诊断会还是定制监控',
       '先发 1 份样例，再推进语音或私聊成交'
     ]
   };
@@ -287,6 +292,7 @@ function saveGenerationLog({ requestType, prompt, taskType, track, tone, length,
 }
 
 function createConsultation(payload) {
+  const { segment, recommendedOffer } = scoreLead(payload);
   const item = {
     id: createId('consult'),
     createdAt: nowIso(),
@@ -300,13 +306,16 @@ function createConsultation(payload) {
     notes: sanitizeText(payload.notes, 1000),
     telegramUserId: sanitizeText(payload.telegramUserId, 100),
     telegramChatId: sanitizeText(payload.telegramChatId, 100),
-    status: sanitizeText(payload.status || 'new', 50)
+    status: sanitizeText(payload.status || 'new', 50),
+    segment,
+    recommendedOffer
   };
   appendJsonItem(CONSULTATIONS_FILE, item);
   return item;
 }
 
 function listConsultations() {
+
   return readJsonArray(CONSULTATIONS_FILE);
 }
 
@@ -361,6 +370,8 @@ async function notifyOwnerConsultation(consultation) {
     `姓名: ${consultation.name || '未填写'}`,
     `联系方式: ${consultation.contact || '未填写'}`,
     `公司: ${consultation.company || '未填写'}`,
+    `客户层级: ${consultation.segment || '未识别'}`,
+    `推荐产品: ${consultation.recommendedOffer || '未生成'}`,
     `赛道: ${TRACKS[consultation.track]?.label || consultation.track}`,
     `来源: ${consultation.source || 'unknown'}`,
     `预算: ${consultation.budget || '未填写'}`,
@@ -434,6 +445,16 @@ app.get('/api/meta', (_req, res) => {
   });
 });
 
+app.get('/api/blueprint', (_req, res) => {
+  return res.json({
+    ok: true,
+    blueprint: BUSINESS_BLUEPRINT,
+    agents: AGENT_DEFINITIONS,
+    contentTemplates: CONTENT_TEMPLATES,
+    chatScripts: CHAT_SCRIPTS
+  });
+});
+
 app.get('/api/distribution-pack', rateLimit, (req, res) => {
   const prompt = sanitizeText(req.query.prompt, 3000);
   const track = sanitizeText(req.query.track, 100);
@@ -454,6 +475,39 @@ app.get('/', (_req, res) => {
   const trackOptions = Object.entries(TRACKS)
     .map(([value, item]) => `<option value="${value}">${item.label}</option>`)
     .join('');
+  const agentCards = AGENT_DEFINITIONS.map((agent) => `
+    <div class="mini-card">
+      <h3>${agent.name}</h3>
+      <p><strong>${agent.mission}</strong></p>
+      <ul>${agent.tasks.map((task) => `<li>${task}</li>`).join('')}</ul>
+      <p class="muted">输出：${agent.output}</p>
+    </div>
+  `).join('');
+  const productCards = BUSINESS_BLUEPRINT.productMatrix.map((item) => `
+    <div class="mini-card">
+      <h3>${item.tier}</h3>
+      <p><strong>${item.goal}</strong></p>
+      <p>适合：${item.audience.join(' / ')}</p>
+      <p>产品：${item.offers.join('；')}</p>
+      <p>价格：${item.price}</p>
+      <p class="muted">目标：${item.outcome}</p>
+    </div>
+  `).join('');
+  const segmentCards = BUSINESS_BLUEPRINT.customerSegments.map((segment) => `
+    <div class="mini-card">
+      <h3>${segment.name}</h3>
+      <p>特点：${segment.traits.join('；')}</p>
+      <p>主卖：${segment.sell.join(' / ')}</p>
+    </div>
+  `).join('');
+  const monthPlanHtml = BUSINESS_BLUEPRINT.firstMonthPlan.map((item) => `
+    <div class="mini-card">
+      <h3>${item.week}</h3>
+      <p><strong>${item.goal}</strong></p>
+      <ul>${item.actions.map((action) => `<li>${action}</li>`).join('')}</ul>
+    </div>
+  `).join('');
+  const templateTabs = Object.entries(CONTENT_TEMPLATES).map(([value, item]) => `<option value="${value}">${item.label}</option>`).join('');
   const telegramHtml = PUBLIC_TELEGRAM_URL
     ? `<p><a href="${PUBLIC_TELEGRAM_URL}" target="_blank" rel="noreferrer">👉 直接进 Telegram 私聊/频道</a></p>`
     : '<p class="muted">可在环境变量里配置 PUBLIC_TELEGRAM_URL，展示 Telegram 私域入口。</p>';
@@ -462,29 +516,58 @@ app.get('/', (_req, res) => {
   <html lang="zh-CN"><meta charset="utf-8">
   <title>${APP_NAME}</title>
   <style>
-    body{font-family:system-ui,-apple-system;max-width:980px;margin:40px auto;padding:0 16px;line-height:1.5}
+    :root{color-scheme:light}
+    body{font-family:system-ui,-apple-system;max-width:1180px;margin:32px auto;padding:0 16px;line-height:1.55;background:#fafafa;color:#111}
     textarea,select,input,button{font:inherit}
     textarea,input{width:100%;box-sizing:border-box}
     .row{display:flex;gap:12px;flex-wrap:wrap;margin:12px 0}
     .row > label{flex:1;min-width:180px}
-    .card{padding:16px;border:1px solid #ddd;border-radius:12px;margin-bottom:16px}
+    .card{padding:18px;border:1px solid #ddd;border-radius:16px;margin-bottom:16px;background:#fff;box-shadow:0 6px 24px rgba(0,0,0,.04)}
     .muted{color:#666}
-    button{cursor:pointer;padding:10px 16px}
-    .two-col{display:grid;grid-template-columns:1.4fr 1fr;gap:16px}
-    @media (max-width: 860px){.two-col{grid-template-columns:1fr}}
+    button{cursor:pointer;padding:10px 16px;border-radius:10px;border:1px solid #111;background:#111;color:#fff}
+    .ghost{background:#fff;color:#111}
+    .two-col{display:grid;grid-template-columns:1.3fr .9fr;gap:16px}
+    .grid-3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+    .grid-4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}
+    .mini-card{padding:16px;border:1px solid #e5e5e5;border-radius:14px;background:#fff}
+    .tag{display:inline-flex;padding:4px 10px;border-radius:999px;background:#f2f2f2;margin:4px 8px 0 0;font-size:13px}
+    pre{overflow:auto}
+    @media (max-width: 960px){.two-col,.grid-3,.grid-4{grid-template-columns:1fr}}
   </style>
   <h1>${APP_NAME}</h1>
   <p>${APP_TAGLINE}</p>
+
   <div class="card">
-    <p><strong>定位：</strong>半自动化的中亚资讯内容生产 + 咨询转化 MVP。前台负责生成内容、引导咨询；后台通过 Telegram 和管理接口沉淀线索，人工成交。</p>
+    <p><strong>定位：</strong>频道不是终点，频道只是筛客户的漏斗口。这个 MVP 现在把“前端内容引流 + 中端情报产品 + 后端高价服务成交”直接落成同一个页面和 API。</p>
     <p><strong>当前 CTA：</strong>${SALES_CTA_TEXT}</p>
+    <div>${BUSINESS_BLUEPRINT.keyMetrics.map((metric) => `<span class="tag">盯 ${metric}</span>`).join('')}</div>
     ${telegramHtml}
+  </div>
+
+  <div class="card">
+    <h2>业务漏斗</h2>
+    <p>${BUSINESS_BLUEPRINT.funnel.join(' → ')}</p>
+  </div>
+
+  <div class="card">
+    <h2>产品矩阵</h2>
+    <div class="grid-4">${productCards}</div>
+  </div>
+
+  <div class="card">
+    <h2>6 个最小 Agent</h2>
+    <div class="grid-3">${agentCards}</div>
+  </div>
+
+  <div class="card">
+    <h2>客户分层与主卖方案</h2>
+    <div class="grid-3">${segmentCards}</div>
   </div>
 
   <div class="two-col">
     <div>
       <div class="card">
-        <h2>内容生成</h2>
+        <h2>内容生成 / 分发包</h2>
         <textarea id="prompt" rows="8" placeholder="输入一条资讯、一个主题，或一段你抓到的市场信息"></textarea>
         <div class="row">
           <label>输出类型：<select id="taskType">${taskOptions}</select></label>
@@ -500,14 +583,28 @@ app.get('/', (_req, res) => {
           <label>长度：<input id="length" type="number" value="120" min="20" max="500"></label>
           <label>变体数：<input id="count" type="number" value="1" min="1" max="5"></label>
         </div>
-        <div class="row"><button id="generateBtn">生成内容</button><button id="distributionBtn">生成引流分发包</button></div>
+        <div class="row">
+          <button id="generateBtn">生成内容</button>
+          <button id="distributionBtn" class="ghost">生成分发包</button>
+        </div>
         <pre id="out" class="card" style="white-space:pre-wrap"></pre>
+      </div>
+
+      <div class="card">
+        <h2>Telegram 内容模板</h2>
+        <div class="row">
+          <label>模板类型：<select id="templateType">${templateTabs}</select></label>
+          <label>示例标题：<input id="templateTitle" value="塔什干某区域建材需求明显上升"></label>
+        </div>
+        <div class="row"><button id="templateBtn" class="ghost">生成模板示例</button></div>
+        <pre id="templateOut" class="card" style="white-space:pre-wrap"></pre>
       </div>
     </div>
 
     <div>
       <div class="card">
         <h2>预约咨询 / 留资</h2>
+        <p class="muted">提交后系统会自动尝试识别客户层级，并给出更适合的产品建议。</p>
         <div class="row">
           <label>姓名<input id="leadName" placeholder="怎么称呼你"></label>
           <label>联系方式<input id="leadContact" placeholder="微信 / Telegram / 手机 / 邮箱"></label>
@@ -516,14 +613,31 @@ app.get('/', (_req, res) => {
           <label>公司/项目<input id="leadCompany" placeholder="公司名 / 项目名"></label>
           <label>预算<input id="leadBudget" placeholder="可选，例：3000-5000/月"></label>
         </div>
-        <label>需求<textarea id="leadDemand" rows="6" placeholder="例如：需要乌兹市场资讯日报、物流短视频脚本、招商内容代做、建材行业线索分析"></textarea></label>
+        <label>需求<textarea id="leadDemand" rows="6" placeholder="例如：需要乌兹市场资讯日报、建材线索分析、市场进入诊断、本地资源对接"></textarea></label>
         <div class="row"><button id="consultBtn">提交咨询</button></div>
         <pre id="consultOut" class="card muted" style="white-space:pre-wrap"></pre>
+      </div>
+
+      <div class="card">
+        <h2>私聊成交话术</h2>
+        <div id="chatScripts">${CHAT_SCRIPTS.map((item) => `<div class="mini-card"><strong>${item.scene}</strong><p>${item.reply}</p></div>`).join('')}</div>
       </div>
     </div>
   </div>
 
+  <div class="card">
+    <h2>第一个月执行清单</h2>
+    <div class="grid-4">${monthPlanHtml}</div>
+  </div>
+
+  <div class="card">
+    <h2>最容易把项目做废的坑</h2>
+    <div>${BUSINESS_BLUEPRINT.pitfalls.map((item) => `<span class="tag">${item}</span>`).join('')}</div>
+  </div>
+
   <script>
+    const templates = ${JSON.stringify(CONTENT_TEMPLATES)};
+
     generateBtn.onclick = async () => {
       out.textContent = '生成中...';
       const count = Number(document.getElementById('count').value || 1);
@@ -554,6 +668,14 @@ app.get('/', (_req, res) => {
       out.textContent = JSON.stringify(data, null, 2);
     };
 
+    templateBtn.onclick = () => {
+      const type = document.getElementById('templateType').value;
+      const title = document.getElementById('templateTitle').value.trim();
+      const prefix = title ? '标题：' + title + '\n' : '';
+      templateOut.textContent = prefix + templates[type].template;
+    };
+    templateBtn.click();
+
     consultBtn.onclick = async () => {
       consultOut.textContent = '提交中...';
       const payload = {
@@ -571,7 +693,9 @@ app.get('/', (_req, res) => {
         body: JSON.stringify(payload)
       });
       const data = await response.json();
-      consultOut.textContent = response.ok ? '已提交，我们会尽快联系你。\n' + JSON.stringify(data, null, 2) : JSON.stringify(data, null, 2);
+      consultOut.textContent = response.ok
+        ? '已提交，我们会尽快联系你。\n' + JSON.stringify({ segment: data.consultation?.segment, recommendedOffer: data.consultation?.recommendedOffer, id: data.consultation?.id }, null, 2)
+        : JSON.stringify(data, null, 2);
     };
   </script>`);
 });
@@ -792,7 +916,7 @@ app.post('/api/integrations/telegram/webhook', async (req, res) => {
   if (consultation.telegramChatId) {
     await sendTelegramMessage(
       consultation.telegramChatId,
-      '已收到你的咨询，我们会尽快人工联系你。你也可以继续补充行业、需求和预算。'
+      `已收到你的咨询。当前识别你更接近【${consultation.segment}】线索，我建议先看【${consultation.recommendedOffer}】。你也可以继续补充行业、需求和预算。`
     ).catch(() => null);
   }
 
